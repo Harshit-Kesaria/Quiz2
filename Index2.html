@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Time Quiz + Leaderboard</title>
+  <style>
+    :root{
+      --bg:#0b1220; --card:#111b2e; --muted:#9fb0d0; --text:#eaf0ff;
+      --accent:#6ea8fe; --good:#3ddc97; --bad:#ff6b6b; --line:#233252;
+    }
+    *{box-sizing:border-box;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+    body{margin:0;background:linear-gradient(180deg,var(--bg),#070b14);color:var(--text);}
+    .wrap{max-width:920px;margin:0 auto;padding:24px;}
+    header{display:flex;gap:12px;align-items:flex-end;justify-content:space-between;flex-wrap:wrap}
+    h1{margin:0;font-size:22px;letter-spacing:.2px}
+    .sub{color:var(--muted);font-size:13px;margin-top:4px}
+    .grid{display:grid;grid-template-columns: 1.2fr .8fr; gap:16px; margin-top:16px;}
+    @media (max-width: 860px){ .grid{grid-template-columns:1fr;} }
+    .card{
+      background:rgba(17,27,46,.95);
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:16px;
+      box-shadow:0 10px 30px rgba(0,0,0,.25);
+    }
+    .row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .pill{
+      display:inline-flex;align-items:center;gap:8px;
+      padding:8px 12px;border-radius:999px;
+      border:1px solid var(--line);color:var(--muted);
+      background:rgba(0,0,0,.15);
+      font-size:13px;
+    }
+    .timer{font-variant-numeric:tabular-nums;color:var(--text)}
+    .timer.danger{color:var(--bad);font-weight:700}
+    .btn{
+      cursor:pointer;border:1px solid var(--line);background:rgba(0,0,0,.18);
+      color:var(--text);padding:10px 12px;border-radius:10px;
+      font-weight:600;
+    }
+    .btn:disabled{opacity:.55;cursor:not-allowed}
+    .btn.good{background:var(--good);border-color:transparent;color:#042016}
+    .q{margin-top:12px}
+    .q h2{margin:10px 0 6px;font-size:16px}
+    .q p{margin:0 0 12px;color:var(--muted);font-size:13px}
+    .answers{display:grid;grid-template-columns:1fr;gap:10px}
+    .answer{
+      text-align:left; padding:12px;border-radius:12px;
+      border:1px solid var(--line); background:rgba(0,0,0,.14);
+      color:var(--text); cursor:pointer;
+    }
+    .answer:hover{border-color:#36548b}
+    .answer[disabled]{cursor:not-allowed;opacity:.9}
+    .answer.correct{border-color:rgba(61,220,151,.5);background:rgba(61,220,151,.12)}
+    .answer.wrong{border-color:rgba(255,107,107,.5);background:rgba(255,107,107,.12)}
+    .progress{height:10px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden;border:1px solid var(--line)}
+    .bar{height:100%;width:0;background:linear-gradient(90deg,var(--accent),#9b7bff)}
+    .divider{height:1px;background:var(--line);margin:14px 0}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:10px;border-bottom:1px solid var(--line)}
+    th{text-align:left;color:var(--muted);font-weight:700}
+    td:nth-child(2), td:nth-child(3), td:nth-child(4){text-align:right}
+    .hint{color:var(--muted);font-size:12px;margin-top:8px}
+    .mono{font-variant-numeric:tabular-nums}
+    .kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:8px;padding:2px 6px;color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Time-Based Quiz</h1>
+        <div class="sub">Answer quickly for a time bonus. Leaderboard is saved in your browser (localStorage).</div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <section class="card">
+        <div class="row">
+          <div class="pill">Question: <span id="qIndex" class="mono">0</span>/<span id="qTotal" class="mono">0</span></div>
+          <div class="pill">Correct: <span id="correctCount" class="mono">0</span></div>
+          <div class="pill">Time left: <span id="timeLeft" class="timer mono">00</span>s</div>
+          <div class="pill">Score: <span id="score" class="mono">0</span></div>
+        </div>
+
+        <div style="margin-top:12px">
+          <div class="progress" aria-label="progress">
+            <div id="progressBar" class="bar"></div>
+          </div>
+        </div>
+
+        <div id="quizArea" class="q"></div>
+
+        <div class="divider"></div>
+
+        <div id="finishArea" style="display:none">
+          <h2>Finished</h2>
+          <p class="sub" style="margin:0 0 10px">
+            Enter your name to save your result to the leaderboard.
+          </p>
+          <div class="row">
+            <input id="nameInput" placeholder="Your name" maxlength="24"
+              style="flex:1;min-width:180px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:rgba(0,0,0,.15);color:var(--text)" />
+            <button id="saveBtn" class="btn good">Save score</button>
+          </div>
+          <div id="finalSummary" class="hint"></div>
+          <div class="hint">Tip: Press <span class="kbd">Enter</span> to save.</div>
+          <div id="lockHint" class="hint"></div>
+        </div>
+      </section>
+
+      <aside class="card">
+        <div class="row">
+          <h2 style="margin:0;font-size:16px">Leaderboard</h2>
+          <div class="pill">All players</div>
+        </div>
+        <div class="hint">Ranking: higher score wins. Tiebreakers: more correct, faster time.</div>
+        <div style="margin-top:10px;overflow:auto">
+          <table aria-label="leaderboard">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Score</th>
+                <th>Correct</th>
+                <th>Time(s)</th>
+              </tr>
+            </thead>
+            <tbody id="lbBody"></tbody>
+          </table>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // ---- CONFIG ----
+  const QUIZ_SECONDS = 45;
+  const POINTS_PER_CORRECT = 100;
+  const TIME_BONUS_PER_SEC = 5;
+
+  const LEADERBOARD_KEY = "timeQuizLeaderboard_v1";
+  // One-submission-per-browser lock (can be bypassed by clearing site data/incognito)
+  const SUBMISSION_LOCK_KEY = "timeQuizSubmissionLocked_v1";
+
+  const QUESTIONS = [
+    {
+      q: "You send: “Gentle Reminder”. What does it ACTUALLY mean?",
+      choices: ["No pressure", "Please respond soon", "I am annoyed now", "Final warning before escalation"],
+      answerIndex: 2
+    },
+    {
+      q: "What is the REAL meaning of: “Let’s circle back later”",
+      choices: ["Important discussion pending", "Need more data", "We forgot the solution", "This conversation is ending now"],
+      answerIndex: 3
+    },
+    {
+      q: "Which number comes next? 2 → 6 → 12 → 20 → ?",
+      choices: ["28", "30", "32", "42"],
+      answerIndex: 1	
+    },
+    {
+      q: "You have: 1 match, 1 candle, 1 lamp. What do you light first?",
+      choices: ["Candle", "Lamp", "Match", "Switch"],
+      answerIndex: 2
+    },
+    {
+      q: "Which sound instantly gives “childhood computer lab” energy?",
+      choices: ["Dial-up internet tone", "64GB pendrive", "Compass box with calculator", "Fast internet at home"],
+      answerIndex: 1
+    }
+  ];
+
+  // ---- STATE ----
+  let timeLeft = QUIZ_SECONDS;
+  let timerId = null;
+  let current = 0;
+  let correct = 0;
+  let finished = false;
+
+  // ---- ELEMENTS ----
+  const qIndexEl = document.getElementById("qIndex");
+  const qTotalEl = document.getElementById("qTotal");
+  const correctCountEl = document.getElementById("correctCount");
+  const timeLeftEl = document.getElementById("timeLeft");
+  const scoreEl = document.getElementById("score");
+  const quizArea = document.getElementById("quizArea");
+  const progressBar = document.getElementById("progressBar");
+
+  const finishArea = document.getElementById("finishArea");
+  const finalSummary = document.getElementById("finalSummary");
+  const nameInput = document.getElementById("nameInput");
+  const saveBtn = document.getElementById("saveBtn");
+  const lockHint = document.getElementById("lockHint");
+
+  const lbBody = document.getElementById("lbBody");
+
+  // ---- HELPERS ----
+  const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+
+  function computeScore({ correctCount, timeRemaining }) {
+    return (correctCount * POINTS_PER_CORRECT) + (timeRemaining * TIME_BONUS_PER_SEC);
+  }
+
+  function elapsedSeconds() {
+    return QUIZ_SECONDS - timeLeft;
+  }
+
+  function hasSubmitted() {
+    return localStorage.getItem(SUBMISSION_LOCK_KEY) === "1";
+  }
+
+  function applySubmissionLockUI() {
+    lockHint.textContent = "Submission limit: you can submit only once on this device/browser.";
+    if (hasSubmitted()) {
+      saveBtn.disabled = true;
+      nameInput.disabled = true;
+      saveBtn.textContent = "Already submitted";
+    }
+  }
+
+  function renderHeader() {
+    qTotalEl.textContent = QUESTIONS.length;
+    qIndexEl.textContent = finished ? QUESTIONS.length : (current + 1);
+    correctCountEl.textContent = correct;
+
+    timeLeftEl.textContent = String(timeLeft).padStart(2, "0");
+    timeLeftEl.classList.toggle("danger", timeLeft <= 10 && !finished);
+
+    scoreEl.textContent = computeScore({ correctCount: correct, timeRemaining: timeLeft });
+
+    const pct = clamp((current / QUESTIONS.length) * 100, 0, 100);
+    progressBar.style.width = pct + "%";
+  }
+
+  function startTimer() {
+    stopTimer();
+    timerId = setInterval(() => {
+      if (finished) return;
+      timeLeft = Math.max(0, timeLeft - 1);
+      renderHeader();
+      if (timeLeft === 0) finishQuiz("Time's up!");
+    }, 1000);
+  }
+
+  function stopTimer() {
+    if (timerId) clearInterval(timerId);
+    timerId = null;
+  }
+
+  function renderQuestion() {
+    if (finished) return;
+
+    const item = QUESTIONS[current];
+    quizArea.innerHTML = `
+      <h2>${escapeHtml(item.q)}</h2>
+      <p>Pick one answer. Faster completion yields a higher score.</p>
+      <div class="answers">
+        ${item.choices.map((c, i) => `
+          <button class="answer" data-idx="${i}" type="button">
+            ${escapeHtml(c)}
+          </button>
+        `).join("")}
+      </div>
+    `;
+
+    quizArea.querySelectorAll(".answer").forEach(btn => {
+      btn.addEventListener("click", () => handleAnswer(Number(btn.dataset.idx)));
+    });
+  }
+
+  function handleAnswer(choiceIdx) {
+    if (finished) return;
+
+    const item = QUESTIONS[current];
+    const buttons = [...quizArea.querySelectorAll(".answer")];
+    buttons.forEach(b => b.disabled = true);
+
+    const correctIdx = item.answerIndex;
+    const isCorrect = choiceIdx === correctIdx;
+    if (isCorrect) correct++;
+
+    buttons.forEach((b, idx) => {
+      if (idx === correctIdx) b.classList.add("correct");
+      if (idx === choiceIdx && !isCorrect) b.classList.add("wrong");
+    });
+
+    renderHeader();
+
+    setTimeout(() => {
+      current++;
+      if (current >= QUESTIONS.length) finishQuiz("Completed!");
+      else { renderHeader(); renderQuestion(); }
+    }, 450);
+  }
+
+  function finishQuiz(reason) {
+    if (finished) return;
+    finished = true;
+
+    stopTimer();
+    renderHeader();
+    progressBar.style.width = "100%";
+
+    quizArea.innerHTML = `
+      <h2>${escapeHtml(reason)}</h2>
+      <p>Your result is ready. Save it to the leaderboard.</p>
+    `;
+
+    finishArea.style.display = "block";
+
+    const finalScore = computeScore({ correctCount: correct, timeRemaining: timeLeft });
+    finalSummary.textContent =
+      `Score: ${finalScore} • Correct: ${correct}/${QUESTIONS.length} • Time used: ${elapsedSeconds()}s`;
+
+    applySubmissionLockUI();
+    if (!hasSubmitted()) nameInput.focus();
+  }
+
+  function loadLeaderboard() {
+    try {
+      const raw = localStorage.getItem(LEADERBOARD_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveLeaderboard(entries) {
+    localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(entries));
+  }
+
+  function renderLeaderboard() {
+    const entries = loadLeaderboard();
+
+    entries.sort((a,b) =>
+      (b.score - a.score) ||
+      (b.correct - a.correct) ||
+      (a.time - b.time)
+    );
+
+    lbBody.innerHTML = entries.length ? entries.map(e => `
+      <tr>
+        <td>${escapeHtml(e.name)}</td>
+        <td class="mono">${e.score}</td>
+        <td class="mono">${e.correct}</td>
+        <td class="mono">${e.time}</td>
+      </tr>
+    `).join("") : `
+      <tr><td colspan="4" style="color:var(--muted)">No scores yet.</td></tr>
+    `;
+  }
+
+  function addToLeaderboard(name) {
+    if (hasSubmitted()) {
+      alert("You have already submitted your score on this device/browser.");
+      return;
+    }
+
+    const trimmed = name.trim();
+    if (!trimmed) return alert("Please enter a name.");
+
+    const score = computeScore({ correctCount: correct, timeRemaining: timeLeft });
+    const entry = { name: trimmed, score, correct, time: elapsedSeconds(), ts: Date.now() };
+
+    const entries = loadLeaderboard();
+    entries.push(entry);
+    saveLeaderboard(entries);
+
+    localStorage.setItem(SUBMISSION_LOCK_KEY, "1");
+
+    renderLeaderboard();
+
+    saveBtn.disabled = true;
+    nameInput.disabled = true;
+    saveBtn.textContent = "Saved";
+    applySubmissionLockUI();
+  }
+
+  function resetQuiz() {
+    stopTimer();
+    timeLeft = QUIZ_SECONDS;
+    current = 0;
+    correct = 0;
+    finished = false;
+
+    finishArea.style.display = "none";
+    nameInput.value = "";
+    nameInput.disabled = false;
+    saveBtn.disabled = false;
+    saveBtn.textContent = "Save score";
+    lockHint.textContent = "";
+
+    renderHeader();
+    renderQuestion();
+    startTimer();
+  }
+
+  function escapeHtml(str){
+    return String(str)
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#039;");
+  }
+
+  // ---- EVENTS ----
+  saveBtn.addEventListener("click", () => addToLeaderboard(nameInput.value));
+  nameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") addToLeaderboard(nameInput.value);
+  });
+
+  // ---- INIT ----
+  renderLeaderboard();
+  resetQuiz();
+})();
+</script>
+</body>
+</html>
