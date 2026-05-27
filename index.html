@@ -8,10 +8,9 @@
   const LEADERBOARD_KEY = "timeQuizLeaderboard_v1";
   const SUBMISSION_LOCK_KEY = "timeQuizSubmissionLocked_v1";
 
-  // Schema field
-  const WEEK_ID = "2026-W01"; // change weekly (or generate dynamically)
+  // Must match your flow schema
+  const WEEK_ID = "2026-W01"; // update each week
 
-  // Power Automate HTTP trigger URL
   const FLOW_URL =
     "https://default5e60f7a7d4104d38b87593ca12adc3.0e.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/899b9a3c914541c0af2719bf77613032/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=orFxomxolOpdOCpoEiZ4V-xVhRuhx8oNCAcIWGHFjCs";
 
@@ -58,16 +57,28 @@
   const scoreEl = document.getElementById("score");
   const quizArea = document.getElementById("quizArea");
   const progressBar = document.getElementById("progressBar");
+
   const finishArea = document.getElementById("finishArea");
   const finalSummary = document.getElementById("finalSummary");
   const nameInput = document.getElementById("nameInput");
   const saveBtn = document.getElementById("saveBtn");
   const lockHint = document.getElementById("lockHint");
+
+  // These may be missing on some versions of the page; code must not crash if null
   const lbBody = document.getElementById("lbBody");
   const exportBtn = document.getElementById("exportBtn");
 
   // ---- HELPERS ----
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+
+  function escapeHtml(str) {
+    return String(str)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
 
   function computeScore({ correctCount, timeRemaining }) {
     return (correctCount * POINTS_PER_CORRECT) + (timeRemaining * TIME_BONUS_PER_SEC);
@@ -82,8 +93,9 @@
   }
 
   function applySubmissionLockUI() {
-    if (!lockHint) return;
-    lockHint.textContent = "Submission limit: you can submit only once on this device/browser.";
+    if (lockHint) {
+      lockHint.textContent = "Submission limit: you can submit only once on this device/browser.";
+    }
     if (hasSubmitted()) {
       if (saveBtn) {
         saveBtn.disabled = true;
@@ -94,12 +106,15 @@
   }
 
   function renderHeader() {
-    if (!qTotalEl) return; // safety
+    if (!qTotalEl || !qIndexEl || !correctCountEl || !timeLeftEl || !scoreEl || !progressBar) return;
+
     qTotalEl.textContent = QUESTIONS.length;
     qIndexEl.textContent = finished ? QUESTIONS.length : (current + 1);
     correctCountEl.textContent = correct;
+
     timeLeftEl.textContent = String(timeLeft).padStart(2, "0");
     timeLeftEl.classList.toggle("danger", timeLeft <= 10 && !finished);
+
     scoreEl.textContent = computeScore({ correctCount: correct, timeRemaining: timeLeft });
 
     const pct = clamp((current / QUESTIONS.length) * 100, 0, 100);
@@ -122,7 +137,8 @@
   }
 
   function renderQuestion() {
-    if (finished) return;
+    if (finished || !quizArea) return;
+
     const item = QUESTIONS[current];
     quizArea.innerHTML = `
       <h2>${escapeHtml(item.q)}</h2>
@@ -142,7 +158,7 @@
   }
 
   function handleAnswer(choiceIdx) {
-    if (finished) return;
+    if (finished || !quizArea) return;
 
     const item = QUESTIONS[current];
     const buttons = [...quizArea.querySelectorAll(".answer")];
@@ -172,20 +188,25 @@
 
     stopTimer();
     renderHeader();
-    progressBar.style.width = "100%";
+    if (progressBar) progressBar.style.width = "100%";
 
-    quizArea.innerHTML = `
-      <h2>${escapeHtml(reason)}</h2>
-      <p>Your result is ready. Save it to the leaderboard.</p>
-    `;
+    if (quizArea) {
+      quizArea.innerHTML = `
+        <h2>${escapeHtml(reason)}</h2>
+        <p>Your result is ready. Save it to the leaderboard.</p>
+      `;
+    }
 
-    finishArea.style.display = "block";
+    if (finishArea) finishArea.style.display = "block";
+
     const finalScore = computeScore({ correctCount: correct, timeRemaining: timeLeft });
-    finalSummary.textContent =
-      `Score: ${finalScore} • Correct: ${correct}/${QUESTIONS.length} • Time used: ${elapsedSeconds()}s`;
+    if (finalSummary) {
+      finalSummary.textContent =
+        `Score: ${finalScore} • Correct: ${correct}/${QUESTIONS.length} • Time used: ${elapsedSeconds()}s`;
+    }
 
     applySubmissionLockUI();
-    if (!hasSubmitted()) nameInput.focus();
+    if (!hasSubmitted() && nameInput) nameInput.focus();
   }
 
   function loadLeaderboard() {
@@ -210,6 +231,9 @@
       (a.time - b.time)
     );
 
+    // KEY FIX: if lbBody is missing, do nothing (don’t crash page)
+    if (!lbBody) return;
+
     lbBody.innerHTML = entries.length ? entries.map(e => `
       <tr>
         <td>${escapeHtml(e.name)}</td>
@@ -222,7 +246,6 @@
     `;
   }
 
-  // ---- POWER AUTOMATE POST (matches your schema) ----
   async function postToFlow(entry) {
     const payload = {
       weekId: WEEK_ID,
@@ -252,58 +275,41 @@
       return;
     }
 
-    const trimmed = name.trim();
+    const trimmed = String(name || "").trim();
     if (!trimmed) return alert("Please enter a name.");
 
     const score = computeScore({ correctCount: correct, timeRemaining: timeLeft });
     const entry = { name: trimmed, score, correct, time: elapsedSeconds(), ts: Date.now() };
 
-    // Prevent double-clicks
-    const oldText = saveBtn.textContent;
-    saveBtn.disabled = true;
-    nameInput.disabled = true;
-    saveBtn.textContent = "Saving...";
+    const oldText = saveBtn ? saveBtn.textContent : "";
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving...";
+    }
+    if (nameInput) nameInput.disabled = true;
 
     try {
-      // local
+      // Local save
       const entries = loadLeaderboard();
       entries.push(entry);
       saveLeaderboard(entries);
       renderLeaderboard();
 
-      // remote
+      // Remote save
       await postToFlow(entry);
 
       localStorage.setItem(SUBMISSION_LOCK_KEY, "1");
-      saveBtn.textContent = "Saved";
+      if (saveBtn) saveBtn.textContent = "Saved";
       applySubmissionLockUI();
     } catch (err) {
       console.error(err);
-      // allow retry
-      saveBtn.disabled = false;
-      nameInput.disabled = false;
-      saveBtn.textContent = oldText;
-      alert("Online save failed. Check console / Network tab.");
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = oldText || "Save score";
+      }
+      if (nameInput) nameInput.disabled = false;
+      alert("Online save failed. Check browser console / Network tab.");
     }
-  }
-
-  function resetQuiz() {
-    stopTimer();
-    timeLeft = QUIZ_SECONDS;
-    current = 0;
-    correct = 0;
-    finished = false;
-
-    finishArea.style.display = "none";
-    nameInput.value = "";
-    nameInput.disabled = false;
-    saveBtn.disabled = false;
-    saveBtn.textContent = "Save score";
-    lockHint.textContent = "";
-
-    renderHeader();
-    renderQuestion();
-    startTimer();
   }
 
   function exportLeaderboardToCSV() {
@@ -323,7 +329,7 @@
       (a.time - b.time)
     );
 
-    const header = ["Name", "Score", "Correct", "Time(s)", "Timestamp"];
+    const header = ["Name","Score","Correct","Time(s)","Timestamp"];
     const rows = data.map(e => [
       e.name ?? "",
       e.score ?? "",
@@ -334,7 +340,7 @@
 
     const csv = [
       header.join(","),
-      ...rows.map(r => r.map(val => `"${String(val).replaceAll('"', '""')}"`).join(","))
+      ...rows.map(r => r.map(val => `"${String(val).replaceAll('"','""')}"`).join(","))
     ].join("\n");
 
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
@@ -350,26 +356,35 @@
     }, 0);
   }
 
-  function escapeHtml(str) {
-    return String(str)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
+  function resetQuiz() {
+    stopTimer();
+    timeLeft = QUIZ_SECONDS;
+    current = 0;
+    correct = 0;
+    finished = false;
+
+    if (finishArea) finishArea.style.display = "none";
+    if (nameInput) {
+      nameInput.value = "";
+      nameInput.disabled = false;
+    }
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save score";
+    }
+    if (lockHint) lockHint.textContent = "";
+
+    renderHeader();
+    renderQuestion();
+    startTimer();
   }
 
-  // ---- EVENTS (with safety checks) ----
-  if (saveBtn && nameInput) {
-    saveBtn.addEventListener("click", () => addToLeaderboard(nameInput.value));
-    nameInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") addToLeaderboard(nameInput.value);
-    });
-  }
-
-  if (exportBtn) {
-    exportBtn.addEventListener("click", exportLeaderboardToCSV);
-  }
+  // ---- EVENTS (safe) ----
+  if (saveBtn) saveBtn.addEventListener("click", () => addToLeaderboard(nameInput ? nameInput.value : ""));
+  if (nameInput) nameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") addToLeaderboard(nameInput.value);
+  });
+  if (exportBtn) exportBtn.addEventListener("click", exportLeaderboardToCSV);
 
   // ---- INIT ----
   renderLeaderboard();
