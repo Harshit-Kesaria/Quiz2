@@ -4,9 +4,12 @@
   const QUIZ_SECONDS = 45;
   const POINTS_PER_CORRECT = 100;
   const TIME_BONUS_PER_SEC = 5;
+
   const LEADERBOARD_KEY = "timeQuizLeaderboard_v1";
-  // One-submission-per-browser lock (can be bypassed by clearing site data/incognito)
   const SUBMISSION_LOCK_KEY = "timeQuizSubmissionLocked_v1";
+
+  // Schema field
+  const WEEK_ID = "2026-W01"; // change weekly (or generate dynamically)
 
   // Power Automate HTTP trigger URL
   const FLOW_URL =
@@ -79,15 +82,19 @@
   }
 
   function applySubmissionLockUI() {
+    if (!lockHint) return;
     lockHint.textContent = "Submission limit: you can submit only once on this device/browser.";
     if (hasSubmitted()) {
-      saveBtn.disabled = true;
-      nameInput.disabled = true;
-      saveBtn.textContent = "Already submitted";
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Already submitted";
+      }
+      if (nameInput) nameInput.disabled = true;
     }
   }
 
   function renderHeader() {
+    if (!qTotalEl) return; // safety
     qTotalEl.textContent = QUESTIONS.length;
     qIndexEl.textContent = finished ? QUESTIONS.length : (current + 1);
     correctCountEl.textContent = correct;
@@ -128,6 +135,7 @@
         `).join("")}
       </div>
     `;
+
     quizArea.querySelectorAll(".answer").forEach(btn => {
       btn.addEventListener("click", () => handleAnswer(Number(btn.dataset.idx)));
     });
@@ -135,6 +143,7 @@
 
   function handleAnswer(choiceIdx) {
     if (finished) return;
+
     const item = QUESTIONS[current];
     const buttons = [...quizArea.querySelectorAll(".answer")];
     buttons.forEach(b => b.disabled = true);
@@ -160,6 +169,7 @@
   function finishQuiz(reason) {
     if (finished) return;
     finished = true;
+
     stopTimer();
     renderHeader();
     progressBar.style.width = "100%";
@@ -194,7 +204,7 @@
 
   function renderLeaderboard() {
     const entries = loadLeaderboard();
-    entries.sort((a,b) =>
+    entries.sort((a, b) =>
       (b.score - a.score) ||
       (b.correct - a.correct) ||
       (a.time - b.time)
@@ -212,17 +222,15 @@
     `;
   }
 
-  // NEW: send the entry to Power Automate
+  // ---- POWER AUTOMATE POST (matches your schema) ----
   async function postToFlow(entry) {
-    // Send fields that are typically useful for Excel
-    // IMPORTANT: these keys must match the JSON schema in your trigger / mapping in the flow
     const payload = {
+      weekId: WEEK_ID,
       name: entry.name,
       score: entry.score,
       correct: entry.correct,
       time: entry.time,
-      ts: entry.ts,
-      quiz: "Syensqo Weekly Quiz"
+      ts: entry.ts
     };
 
     const res = await fetch(FLOW_URL, {
@@ -233,12 +241,11 @@
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new Error(`HTTP ${res.status} ${res.statusText} ${text}`.trim());
+      throw new Error(`Flow error ${res.status}: ${text}`);
     }
     return res;
   }
 
-  // UPDATED: now also posts to Power Automate
   async function addToLeaderboard(name) {
     if (hasSubmitted()) {
       alert("You have already submitted your score on this device/browser.");
@@ -251,20 +258,20 @@
     const score = computeScore({ correctCount: correct, timeRemaining: timeLeft });
     const entry = { name: trimmed, score, correct, time: elapsedSeconds(), ts: Date.now() };
 
-    // UI: prevent double clicks
+    // Prevent double-clicks
+    const oldText = saveBtn.textContent;
     saveBtn.disabled = true;
     nameInput.disabled = true;
-    const oldText = saveBtn.textContent;
     saveBtn.textContent = "Saving...";
 
     try {
-      // 1) local save (existing behavior)
+      // local
       const entries = loadLeaderboard();
       entries.push(entry);
       saveLeaderboard(entries);
       renderLeaderboard();
 
-      // 2) remote save (Power Automate -> Excel)
+      // remote
       await postToFlow(entry);
 
       localStorage.setItem(SUBMISSION_LOCK_KEY, "1");
@@ -272,13 +279,11 @@
       applySubmissionLockUI();
     } catch (err) {
       console.error(err);
-      // Roll back local lock so they can retry
+      // allow retry
       saveBtn.disabled = false;
       nameInput.disabled = false;
       saveBtn.textContent = oldText;
-
-      alert("Could not save to the online leaderboard (Power Automate). " +
-            "Please try again, and check the browser console for details.");
+      alert("Online save failed. Check console / Network tab.");
     }
   }
 
@@ -312,13 +317,13 @@
       return;
     }
 
-    data.sort((a,b) =>
+    data.sort((a, b) =>
       (b.score - a.score) ||
       (b.correct - a.correct) ||
       (a.time - b.time)
     );
 
-    const header = ["Name","Score","Correct","Time(s)","Timestamp"];
+    const header = ["Name", "Score", "Correct", "Time(s)", "Timestamp"];
     const rows = data.map(e => [
       e.name ?? "",
       e.score ?? "",
@@ -329,7 +334,7 @@
 
     const csv = [
       header.join(","),
-      ...rows.map(r => r.map(val => `"${String(val).replaceAll('"','""')}"`).join(","))
+      ...rows.map(r => r.map(val => `"${String(val).replaceAll('"', '""')}"`).join(","))
     ].join("\n");
 
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
@@ -345,21 +350,26 @@
     }, 0);
   }
 
-  function escapeHtml(str){
+  function escapeHtml(str) {
     return String(str)
-      .replaceAll("&","&amp;")
-      .replaceAll("<","&lt;")
-      .replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;")
-      .replaceAll("'","&#039;");
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
   }
 
-  // ---- EVENTS ----
-  saveBtn.addEventListener("click", () => addToLeaderboard(nameInput.value));
-  nameInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") addToLeaderboard(nameInput.value);
-  });
-  exportBtn.addEventListener("click", exportLeaderboardToCSV);
+  // ---- EVENTS (with safety checks) ----
+  if (saveBtn && nameInput) {
+    saveBtn.addEventListener("click", () => addToLeaderboard(nameInput.value));
+    nameInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") addToLeaderboard(nameInput.value);
+    });
+  }
+
+  if (exportBtn) {
+    exportBtn.addEventListener("click", exportLeaderboardToCSV);
+  }
 
   // ---- INIT ----
   renderLeaderboard();
